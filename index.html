@@ -1,0 +1,369 @@
+<!-- <!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <link rel="stylesheet" href="style.css">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document</title>
+</head>
+
+<body class="app">
+    <div class="timer">
+        <div class="timer__display" data-role="display">0</div>
+        <div class="timer__controls" data-role="controls">
+            <button class="btn btn--step" data-action="step" data-step="-10">-10</button>
+            <button class="btn btn--step" data-action="step" data-step="-5">-5</button>
+            <button class="btn btn--step" data-action="step" data-step="-1">-1</button>
+            <button class="btn btn--secondaty" data-action="start-delayed" data-delay="3">Start with 3 sec
+                delay</button>
+            <button class="btn btn--primary" data-action="start">Start</button>
+            <button class="btn btn--secondaty" data-action="pause">Pause</button>
+            <button class="btn btn--danger" data-action="reset">Reset</button>
+            <button class="btn btn--step" data-action="step" data-step="1">+1</button>
+            <button class="btn btn--step" data-action="step" data-step="5">+5</button>
+            <button class="btn btn--step" data-action="step" data-step="10">+10</button>
+        </div>
+    </div>
+    <script src="main.js"></script>
+</body>
+
+</html> -->
+
+<!DOCTYPE html>
+<html lang="ru">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Таймер с событиями</title>
+    <style>
+        body {
+            font-family: system-ui, sans-serif;
+            padding: 24px;
+        }
+
+        .timer__display {
+            font-size: 48px;
+            font-variant-numeric: tabular-nums;
+            margin-bottom: 16px;
+        }
+
+        .timer__controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-bottom: 24px;
+        }
+
+        .btn {
+            padding: 8px 14px;
+            cursor: pointer;
+        }
+
+        .btn--primary {
+            font-weight: bold;
+        }
+
+        .btn--danger {
+            color: #b00;
+        }
+
+        .event-list {
+            list-style: none;
+            padding: 0;
+            max-width: 320px;
+        }
+
+        .event-list__item {
+            display: flex;
+            justify-content: space-between;
+            padding: 6px 10px;
+            border-bottom: 1px solid #eee;
+            transition: background .15s, opacity .15s;
+        }
+
+        .event-list__item[data-state="upcoming"] {
+            opacity: .6;
+        }
+
+        .event-list__item[data-state="active"] {
+            background: #fff3cd;
+            font-weight: bold;
+        }
+
+        .event-list__item[data-state="passed"] {
+            opacity: .4;
+            text-decoration: line-through;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="timer">
+        <div class="timer__display" data-role="display">0.00</div>
+
+        <div class="timer__controls" data-role="controls">
+            <button class="btn" data-action="step" data-step="-10">-10</button>
+            <button class="btn" data-action="step" data-step="-5">-5</button>
+            <button class="btn" data-action="step" data-step="-1">-1</button>
+
+            <button class="btn btn--primary" data-action="start">Start</button>
+            <button class="btn" data-action="pause">Pause</button>
+            <button class="btn btn--danger" data-action="reset">Reset</button>
+            <button class="btn" data-action="start-delayed" data-delay="3000">Start with 3 sec delay</button>
+
+            <button class="btn" data-action="step" data-step="1">+1</button>
+            <button class="btn" data-action="step" data-step="5">+5</button>
+            <button class="btn" data-action="step" data-step="10">+10</button>
+        </div>
+
+        <ul class="event-list" data-role="event-list"></ul>
+    </div>
+
+    <script>
+        (() => {
+            'use strict';
+
+
+
+            // --- 1. Хуки ---
+            const root = document.querySelector('.timer');
+            const display = root.querySelector('[data-role="display"]');
+            const controls = root.querySelector('[data-role="controls"]');
+            const eventList = root.querySelector('[data-role="event-list"]');
+
+            // --- 2. Состояние таймера ---
+            const state = {
+                accumulated: 0,   // секунды, накопленные до последней паузы
+                startedAt: null,  // performance.now() когда запущен, иначе null
+                offset: 0,        // поправка от кнопок ±N
+                running: false,
+                delayUntil: null, // performance.now(), когда должен начаться отложенный старт
+                lastTime: 0,      // время на прошлом тике — для детекта срабатывания событий
+            };
+
+            controls.addEventListener('click', () => {
+                ensureAudio();   // первый жест разблокирует звук
+            }, { once: true });
+
+            // --- 3. События ---
+            // lavel -> label (исправлена опечатка). Отсортированы по at.
+            const events = [
+                { at: 1, label: 'Старт', sound: { frequency: 660, type: 'square' } },
+                { at: 60 * 2 - 10, label: 'Маленький кемпик через 10 сек', sound: { frequency: 660, type: 'square' } },
+                { at: 60 * 4 - 10, label: 'Маленький кемпик через 10 сек', sound: { frequency: 660, type: 'square' } },
+                { at: 60 * 8 - 10, label: 'Средний кемпик через 10 сек', sound: { frequency: 660, type: 'square' } },
+                { at: 60 * 8 - 10, label: 'Казик через 10 сек', sound: { frequency: 660, type: 'square' } },
+                { at: 60 * 10 - 60, label: 'Мид ящики через 10 сек', sound: { frequency: 660, type: 'square' } },
+                { at: 60 * 23 - 30, label: 'Долгая смерть через 30 сек', sound: { frequency: 660, type: 'square' } },
+                { at: 60 * 5 - 30, label: 'Бафф через 30 сек', sound: { frequency: 660, type: 'square' } },
+                { at: 60 * 10 - 30, label: 'Бафф через 30 сек', sound: { frequency: 660, type: 'square' } },
+                { at: 60 * 15 - 30, label: 'Бафф через 30 сек', sound: { frequency: 660, type: 'square' } },
+                { at: 60 * 20 - 30, label: 'Бафф через 30 сек', sound: { frequency: 660, type: 'square' } },
+                { at: 60 * 25 - 30, label: 'Бафф через 30 сек', sound: { frequency: 660, type: 'square' } },
+                { at: 60 * 30 - 30, label: 'Бафф через 30 сек', sound: { frequency: 660, type: 'square' } },
+                { at: 60 * 35 - 30, label: 'Бафф через 30 сек', sound: { frequency: 660, type: 'square' } },
+                { at: 60 * 40 - 30, label: 'Бафф через 30 сек', sound: { frequency: 660, type: 'square' } },
+                { at: 60 * 45 - 30, label: 'Бафф через 30 сек', sound: { frequency: 660, type: 'square' } },
+                { at: 60 * 50 - 30, label: 'Бафф через 30 сек', sound: { frequency: 660, type: 'square' } },
+            ].sort((a, b) => a.at - b.at);
+
+            // --- 4. Текущее время ---
+            function currentTime() {
+                let base = state.accumulated;
+                if (state.running && state.startedAt !== null) {
+                    base += (performance.now() - state.startedAt) / 1000;
+                }
+                const t = base + state.offset;
+                return Math.max(0, t); // не уходим в минус
+            }
+
+            // --- 5. Действия ---
+            function startTimer() {
+                if (state.running || state.delayUntil !== null) return;
+                state.startedAt = performance.now();
+                state.running = true;
+            }
+
+            function pauseTimer() {
+                if (!state.running) return;
+                state.accumulated += (performance.now() - state.startedAt) / 1000;
+                state.startedAt = null;
+                state.running = false;
+            }
+
+            function resetTimer() {
+                state.accumulated = 0;
+                state.startedAt = null;
+                state.offset = 0;
+                state.running = false;
+                state.delayUntil = null;
+                state.lastTime = 0;
+                render();
+            }
+
+            function adjustTime(deltaSeconds) {
+                state.offset += deltaSeconds;
+                // Не позволяем уйти в минус
+                if (currentTime() < 0) {
+                    state.offset -= deltaSeconds;
+                }
+                render(); // мгновенная перерисовка, не ждём тика
+            }
+
+            function startTimerWithDelay(delayMs) {
+                if (state.running || state.delayUntil !== null) return;
+                state.delayUntil = performance.now() + delayMs;
+            }
+
+            // --- 6. Срабатывание событий ---
+            // lastTime < at <= now — ловим все, что попали в интервал.
+            // При перемотке назад lastTime > now — событие снова "впереди".
+            function checkEvents(lastTime, now) {
+                let changed = false;
+                for (const ev of events) {
+                    if (lastTime < now) {
+                        // движение вперёд: событие сработало, если попало в (lastTime, now]
+                        if (ev.at > lastTime && ev.at <= now) {
+                            onEventTriggered(ev);
+                            changed = true;
+                        }
+                    } else {
+                        // перемотка назад или стоит на месте — просто перерисовываем состояние
+                        changed = true;
+                    }
+                }
+                if (changed) renderEventList(now);
+            }
+
+            function onEventTriggered(ev) {
+                // beep();
+                beep(ev.sound ?? {});
+                // или разные звуки для разных событий:
+                // beep({ frequency: ev.at < 5 ? 880 : 440 });
+                console.log(`[event] ${ev.label} на ${ev.at}s`);
+                // здесь можно: подсветить, звук, вибрация
+            }
+
+            // --- 7. Рендер ---
+            function formatTime(seconds) {
+                const s = Math.max(0, seconds);
+                const mm = Math.floor(s / 60);
+                const ss = (s % 60).toFixed(2).padStart(5, '0');
+                return `${mm}:${ss}`;
+            }
+
+            function render() {
+                const now = currentTime();
+                display.textContent = formatTime(now);
+                renderEventList(now);
+            }
+
+            function eventState(ev, now) {
+                // активное — если оно последнее прошедшее (в пределах ±2 сек, можно настроить)
+                if (now >= ev.at && now < ev.at + 2) return 'active';
+                if (now >= ev.at) return 'passed';
+                return 'upcoming';
+            }
+
+            function renderEventList(now) {
+                // Список маленький — можно пересоздавать. Для сотен событий — обновляйте атрибуты.
+                eventList.innerHTML = '';
+                for (const ev of events) {
+                    const li = document.createElement('li');
+                    li.className = 'event-list__item';
+                    li.dataset.state = eventState(ev, now);
+                    li.innerHTML = `<span>${ev.label}</span><span>${formatTime(ev.at)}</span>`;
+                    eventList.appendChild(li);
+                }
+            }
+
+            // --- 8. Тик-цикл ---
+            function tick() {
+                // Отложенный старт
+                if (state.delayUntil !== null && performance.now() >= state.delayUntil) {
+                    state.delayUntil = null;
+                    state.startedAt = performance.now();
+                    state.running = true;
+                }
+
+                const now = currentTime();
+
+                // Проверяем события (и при прокрутке вперёд, и при перемотке назад)
+                checkEvents(state.lastTime, now);
+                state.lastTime = now;
+
+                display.textContent = formatTime(now);
+
+                requestAnimationFrame(tick);
+            }
+
+            // --- 9. Обработчик кнопок (делегирование) ---
+            controls.addEventListener('click', (event) => {
+                const button = event.target.closest('[data-action]');
+                if (!button) return;
+
+                const action = button.dataset.action;
+                switch (action) {
+                    case 'step':
+                        adjustTime(Number(button.dataset.step));
+                        break;
+                    case 'start':
+                        startTimer();
+                        break;
+                    case 'pause':
+                        pauseTimer();
+                        break;
+                    case 'reset':
+                        resetTimer();
+                        break;
+                    case 'start-delayed':
+                        startTimerWithDelay(Number(button.dataset.delay));
+                        break;
+                }
+            });
+
+            // --- 10. Инициализация ---
+            renderEventList(0);
+            requestAnimationFrame(tick);
+        })();
+
+
+
+
+        let audioCtx = null;
+
+        // Создаём контекст лениво — при первом клике пользователя
+        function ensureAudio() {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+        }
+
+        function beep({ frequency = 880, duration = 0.15, volume = 0.2, type = 'sine' } = {}) {
+            ensureAudio();
+            if (!audioCtx) return;
+
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+
+            osc.type = type;
+            osc.frequency.value = frequency;
+
+            // Плавное затухание, чтобы не было щелчка
+            const now = audioCtx.currentTime;
+            gain.gain.setValueAtTime(volume, now);
+            gain.gain.exponentialRampToValueAtTime(0.001, now + duration);
+
+            osc.connect(gain).connect(audioCtx.destination);
+            osc.start(now);
+            osc.stop(now + duration);
+        }
+    </script>
+</body>
+
+</html>
